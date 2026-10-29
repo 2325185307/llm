@@ -1,0 +1,11 @@
+# 本地密钥与配置（含真实 API Key，禁止提交）
+config.ini
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 本地日志与临时输出
+*.err
+*.out
