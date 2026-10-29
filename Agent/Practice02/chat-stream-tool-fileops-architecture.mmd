@@ -1,0 +1,105 @@
+%% =====================================================================
+%% chat-stream-tool-fileops.py  代码架构图
+%% 说明：带工具调用 + 流式输出的命令行 LLM 助手（12 个本地工具）
+%% =====================================================================
+graph TD
+
+    %% ---------------- 入口与配置层 ----------------
+    subgraph L0["① 启动与配置层"]
+        A1["main 脚本入口<br/>标准输出设置 UTF-8"]
+        A2["BASE_DIR<br/>脚本所在目录"]
+        A3["configparser 读取 config.ini<br/>[llm] 段"]
+        A4["config.ini<br/>base_url / api_key / model"]
+        A5["OpenAI 客户端<br/>client = OpenAI(...)"]
+        A1 --> A2 --> A3
+        A4 --> A3
+        A3 --> A5
+    end
+
+    %% ---------------- 公共工具层 ----------------
+    subgraph L1["② 底层公共辅助"]
+        B1["_decode(data)<br/>UTF-8 → GBK → replace 回退解码"]
+        B2["_run_cmd(args)<br/>subprocess 执行命令 + 解码 + strip"]
+        B2 --> B1
+    end
+
+    %% ---------------- 本地工具层 ----------------
+    subgraph L2["③ 本地工具函数（实现层）"]
+        direction TB
+        subgraph L2A["系统 / 计算工具"]
+            T1["get_date()<br/>cmd /c date /t + time /t<br/>（日期时间）"]
+            T2["is_leap_year(year)<br/>闰年规则计算"]
+        end
+        subgraph L2B["目录类工具"]
+            T3["get_cwd()<br/>获取当前工作目录"]
+            T4["list_dir(path)<br/>列出目录内容（分类排序）"]
+            T5["create_dir(path)<br/>os.makedirs 递归创建"]
+            T6["delete_dir(path)<br/>shutil.rmtree 递归删除"]
+        end
+        subgraph L2C["文件类工具"]
+            T7["get_file_type(path)<br/>按扩展名映射类型表"]
+            T8["read_file(path)<br/>二进制检测 + 1MB 上限"]
+            T9["create_file(directory, filename)<br/>创建空文件"]
+            T10["edit_file(path, content)<br/>覆盖写入"]
+            T11["delete_file(path)<br/>os.remove"]
+            T12["rename_item(path, new_name)<br/>os.rename + 名称合法性校验"]
+        end
+        T3 --> T4
+    end
+    T1 --> B2
+    T8 --> B1
+
+    %% ---------------- 工具注册层 ----------------
+    subgraph L3["④ 工具注册与描述层"]
+        C1["tools 列表<br/>JSON Schema 函数声明<br/>type=function / name / description / parameters"]
+        C2["tool_functions 字典<br/>工具名 → 实际函数 映射表"]
+        C3[("12 个工具名<br/>getdate · isleapyear · getcwd · listdir<br/>getfiletype · readfile · createfile · editfile<br/>createdir · deletedir · deletefile · rename")]
+        C1 -.同名对应.-> C3
+        C2 -.同名对应.-> C3
+    end
+    T1 & T2 & T3 & T4 & T5 & T6 & T7 & T8 & T9 & T10 & T11 & T12 --> C2
+
+    %% ---------------- 运行层 ----------------
+    subgraph L4["⑤ 主循环与执行流程"]
+        direction TB
+        M1["history = []<br/>对话消息历史"]
+        M2["input(prompt)<br/>读取用户输入"]
+        M3["history.append<br/>{role: user, content: prompt}"]
+        M4{"第一轮：非流式调用<br/>tool_choice = auto"}
+        M5{"message.tool_calls<br/>是否请求工具？"}
+        M6["追加 assistant 消息<br/>含 tool_calls 列表"]
+        M7["逐条执行工具<br/>json.loads(arguments)<br/>tool_functions[name](**args)"]
+        M8["追加 role=tool 消息<br/>携带 tool_call_id 与结果"]
+        M9{"第二轮：流式调用<br/>stream = True"}
+        M10["逐 chunk 拼接 delta.content<br/>print 增量输出"]
+        M11["history.append<br/>{role: assistant, content: reply}"]
+
+        M1 --> M2 --> M3 --> M4 --> M5
+        M5 -- 是 --> M6 --> M7 --> M8
+        M8 -- 循环再次调用模型 --> M4
+        M5 -- 否 --> M9 --> M10 --> M11
+        M11 -- 回到下一轮对话 --> M2
+    end
+
+    %% ---------------- 跨层依赖 ----------------
+    A5 -->|chat.completions.create| M4
+    A5 -->|chat.completions.create| M9
+    C1 -->|随请求上报工具声明| M4
+    C2 -->|按名派发执行| M7
+    M4 -->|模型返回 tool_calls| M5
+    M10 -->|最终回答| OUT["终端输出"]
+
+    %% ---------------- 样式 ----------------
+    classDef entry fill:#e3f2fd,stroke:#1565c0,stroke-width:1.5px,color:#0d47a1
+    classDef helper fill:#f3e5f5,stroke:#7b1fa2,stroke-width:1.2px,color:#4a148c
+    classDef tool fill:#e8f5e9,stroke:#2e7d32,stroke-width:1.2px,color:#1b5e20
+    classDef reg fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,color:#e65100
+    classDef flow fill:#fce4ec,stroke:#c2185b,stroke-width:1.2px,color:#880e4f
+    classDef out fill:#eceff1,stroke:#455a64,stroke-width:1.2px,color:#263238
+
+    class A1,A2,A3,A4,A5 entry
+    class B1,B2 helper
+    class T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12 tool
+    class C1,C2,C3 reg
+    class M1,M2,M3,M4,M5,M6,M7,M8,M9,M10,M11 flow
+    class OUT out
