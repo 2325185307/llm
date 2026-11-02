@@ -294,6 +294,79 @@ def load_skill(name, filename=None):
     return f"错误：在技能 {skill['name']!r} 中未找到文件 {filename!r}。"
 
 
+# ─── createSkill 工具实现 ───
+
+_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def _yaml_quote(value):
+    """把字符串安全地放进 YAML 双引号标量。"""
+    value = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+    return f'"{value}"'
+
+
+def _strip_frontmatter(text):
+    """去掉开头的 frontmatter 块(--- ... ---)，返回正文；无 frontmatter 时原样返回。"""
+    text = text.lstrip("\ufeff")
+    lines = text.splitlines()
+    start = 0
+    while start < len(lines) and not lines[start].strip():
+        start += 1
+    if start >= len(lines) or lines[start].strip() != "---":
+        return text
+    for i in range(start + 1, len(lines)):
+        if lines[i].strip() == "---":
+            return "\n".join(lines[i + 1 :]).lstrip("\n")
+    return text
+
+
+def create_skill(name, skillContext):
+    """createSkill 工具：在 .agents/skills/<name>/ 下创建 SKILL.md。
+
+    name 仅允许小写字母、数字和连字符；skillContext 为写入 SKILL.md 的完整内容。
+    若内容缺少规范的 Frontmatter，会自动补齐 name 与 description。
+    """
+    name = str(name or "").strip()
+    if not _NAME_RE.fullmatch(name):
+        return (
+            f"错误：技能名称 {name!r} 不合法，只能由小写字母、数字和连字符组成"
+            f"（如 office-file），不能为空或含空格。"
+        )
+
+    skillContext = str(skillContext or "")
+    fm = _parse_frontmatter(skillContext)
+    if fm.get("name") and fm.get("description"):
+        content = skillContext  # 已含规范的 name + description，原样写入
+    else:
+        description = (fm.get("description") or "").strip() or name
+        body = _strip_frontmatter(skillContext).lstrip("\n")
+        if not body.strip():
+            body = skillContext.strip()
+        content = (
+            "---\n"
+            f"name: {name}\n"
+            f"description: {_yaml_quote(description)}\n"
+            "---\n\n" + body
+        )
+
+    skill_dir = os.path.join(SKILLS_DIR, name)
+    try:
+        os.makedirs(skill_dir, exist_ok=True)
+    except OSError as exc:
+        return f"错误：创建技能目录失败：{exc}"
+
+    skill_md = os.path.join(skill_dir, "SKILL.md")
+    try:
+        with open(skill_md, "w", encoding="utf-8") as f:
+            f.write(content)
+    except OSError as exc:
+        return f"错误：写入 SKILL.md 失败：{exc}"
+
+    # 重新扫描，让新技能立即可被 loadSkill 发现并使用
+    discover_skills()
+    return f"已创建技能 {name}，文件：{skill_md}"
+
+
 # ─── System Prompt 与工具定义 ───
 
 
@@ -338,6 +411,34 @@ LOAD_SKILL_TOOL = {
                 },
             },
             "required": ["name"],
+        },
+    },
+}
+
+
+CREATE_SKILL_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "createSkill",
+        "description": (
+            "根据用户需求创建一个新的技能(Skill)。"
+            "会在当前项目的 .agents/skills/<name>/ 目录下生成 SKILL.md 文件。"
+            "name 必须是小写字母、数字和连字符；skillContext 是写入 SKILL.md 的完整内容，"
+            "应包含 YAML Frontmatter（name 与 description 字段）以及正文说明。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "技能名称，仅允许小写字母、数字和连字符，例如 office-file",
+                },
+                "skillContext": {
+                    "type": "string",
+                    "description": "要写入 SKILL.md 的完整内容，需含 YAML Frontmatter（name、description）和正文",
+                },
+            },
+            "required": ["name", "skillContext"],
         },
     },
 }

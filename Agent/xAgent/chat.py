@@ -10,6 +10,7 @@ import trafilatura
 from openai import OpenAI
 
 import skills
+import mcp_client
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -320,9 +321,22 @@ tool_functions = {
 skills.discover_skills()
 SYSTEM_MESSAGE = skills.build_system_message()
 
-# 追加 loadSkill 工具，与已有 searchWeb / fetchWeb / RunCli 协同工作
+# 追加 loadSkill / createSkill 工具，与已有 searchWeb / fetchWeb / RunCli 协同工作
 tools.append(skills.LOAD_SKILL_TOOL)
 tool_functions["loadSkill"] = skills.load_skill
+tools.append(skills.CREATE_SKILL_TOOL)
+tool_functions["createSkill"] = skills.create_skill
+
+# --- MCP 工具动态注册 ---
+# 读取当前项目目录(cwd)下的 .mcp.json，连接外部 MCP Server，把其工具并入 tools，
+# 使 LLM 能像调用本地 Function Calling 工具一样调用 MCP 工具。
+_mcp_defs, _mcp_fns, _mcp_msgs = mcp_client.discover_and_register(
+    reserved_names={t["function"]["name"] for t in tools}
+)
+for _msg in _mcp_msgs:
+    print(f"[MCP] {_msg}", file=sys.stderr)
+tools.extend(_mcp_defs)
+tool_functions.update(_mcp_fns)
 
 def main():
     """命令行交互入口：终端里的多轮对话 REPL。"""
