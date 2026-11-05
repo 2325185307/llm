@@ -11,6 +11,7 @@ from openai import OpenAI
 
 import skills
 import mcp_client
+import context
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -33,6 +34,9 @@ CLI_TIMEOUT = 30
 # RunCli 返回给 LLM 的 stdout / stderr 长度上限，避免超长输出占用过多上下文
 MAX_STDOUT_CHARS = 4000
 MAX_STDERR_CHARS = 2000
+
+# /compact 压缩时允许模型输出的最大 token 数（目标摘要约 5000 tokens，留足余量）
+COMPACT_MAX_TOKENS = 8192
 
 
 def _decode(data: bytes) -> str:
@@ -327,6 +331,10 @@ tool_functions["loadSkill"] = skills.load_skill
 tools.append(skills.CREATE_SKILL_TOOL)
 tool_functions["createSkill"] = skills.create_skill
 
+# 追加 recallContext 工具：检索 /compact 压缩前保存的原始上下文归档
+tools.append(context.RECALL_CONTEXT_TOOL)
+tool_functions["recallContext"] = context.recall_context
+
 # --- MCP 工具动态注册 ---
 # 读取当前项目目录(cwd)下的 .mcp.json，连接外部 MCP Server，把其工具并入 tools，
 # 使 LLM 能像调用本地 Function Calling 工具一样调用 MCP 工具。
@@ -338,12 +346,92 @@ for _msg in _mcp_msgs:
 tools.extend(_mcp_defs)
 tool_functions.update(_mcp_fns)
 
+def _do_compact(history):
+    """执行 /compact：先归档原始上下文，再调用 LLM 生成摘要，最后替换上下文。
+
+    返回 (新 history, 是否成功, 提示消息)。失败时保持原 history 不变。
+    压缩期间不传 tools，因此模型只能生成摘要，不能调用其它工具。
+    """
+    # 1) 必须先成功保存原始上下文，否则不进行后续压缩
+    try:
+        archive_id, archive_path = context.save_archive(history)
+    except OSError as exc:
+        return history, False, f"✗ 压缩失败：原始上下文归档保存失败：{exc}"
+
+    print(f"正在压缩上下文（归档编号 {archive_id}，共 {len(history)} 条消息）…")
+
+    # 2) 调用 LLM 生成摘要
+    try:
+        messages = context.build_compact_messages(history)
+        resp = client.chat.completions.create(
+            model=section["model"],
+            messages=messages,
+            max_tokens=COMPACT_MAX_TOKENS,
+        )
+        summary = (resp.choices[0].message.content or "").strip()
+    except Exception as exc:
+        return history, False, f"✗ 压缩失败：{exc}\n原上下文已保留，归档在 {archive_path}"
+
+    if not summary:
+        return history, False, f"✗ 压缩失败：模型未返回摘要\n原上下文已保留，归档在 {archive_path}"
+
+    # 3) 追加归档说明，并替换上下文（保留 System Prompt）
+    summary = summary.rstrip() + "\n\n" + context.make_archive_note(archive_id)
+    new_history = [SYSTEM_MESSAGE, {"role": "system", "content": summary}]
+    new_tokens = context.count_history_tokens(new_history)
+    return (
+        new_history,
+        True,
+        f"✓ 压缩成功：归档编号 {archive_id}，新上下文约 {new_tokens} tokens（{context.format_k(new_tokens)}）",
+    )
+
+
+def _status_line(current_tokens, window, is_default):
+    """构造上下文占用状态行，返回 (状态文本, 占用百分比)。"""
+    pct = current_tokens / window * 100
+    win_label = context.format_k(window) + ("（默认）" if is_default else "")
+    line = f"[上下文] {context.format_k(current_tokens)} / {win_label}  ({pct:.1f}%)"
+    if pct >= context.COMPACT_THRESHOLD * 100:
+        line += f"  ⚠️ 已达 {int(context.COMPACT_THRESHOLD * 100)}% 阈值，请执行 /compact"
+    return line, pct
+
+
 def main():
     """命令行交互入口：终端里的多轮对话 REPL。"""
+    window, is_default = context.get_context_window(section["model"])
     history = [SYSTEM_MESSAGE]
+    current_tokens = context.count_history_tokens(history)
+    api_prompt_tokens = None  # 最近一次 API 报告的输入 token 数（优先使用）
+
+    print("输入 /compact 可手动压缩上下文。")
     while True:
-        prompt = input("please input your prompt：")
+        # 显示上下文占用；达到 70% 时暂停接收普通提示词
+        status, pct = _status_line(current_tokens, window, is_default)
+        blocked = pct >= context.COMPACT_THRESHOLD * 100
+
+        if blocked:
+            prompt = input(f"{status}\n[已暂停] 仅接受 /compact 命令，请输入：")
+        else:
+            prompt = input(f"{status}\nplease input your prompt：")
         print("---")
+
+        prompt = prompt.strip()
+
+        if prompt == "/compact":
+            history, ok, msg = _do_compact(history)
+            print(msg)
+            if ok:
+                current_tokens = context.count_history_tokens(history)
+                api_prompt_tokens = None
+            continue
+
+        if blocked:
+            print("上下文已达 70% 阈值，已暂停接收新提示词，请先执行 /compact。")
+            continue
+
+        if not prompt:
+            continue
+
         history.append({"role": "user", "content": prompt})
 
         # 第一轮：非流式调用，处理模型可能发起的工具调用，直到模型给出最终回答
@@ -354,6 +442,8 @@ def main():
                 tools=tools,
                 tool_choice="auto",
             )
+            if getattr(response, "usage", None):
+                api_prompt_tokens = getattr(response.usage, "prompt_tokens", None)
             message = response.choices[0].message
 
             if not message.tool_calls:
@@ -404,6 +494,12 @@ def main():
                 print(delta, end="", flush=True)
         print()
         history.append({"role": "assistant", "content": reply})
+
+        # 每轮结束后更新上下文用量：优先 API 的 prompt_tokens，否则估算
+        if api_prompt_tokens is not None:
+            current_tokens = api_prompt_tokens + context.estimate_tokens(reply)
+        else:
+            current_tokens = context.count_history_tokens(history)
 
 
 if __name__ == "__main__":
