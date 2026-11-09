@@ -13,3 +13,6 @@ __pycache__/
 # xAgent 运行时数据（会话存档 / 上下文归档），不提交
 .agents/sessions/
 .agents/context/
+
+# xAgent 技能下载包（含 zip 与重复副本），保留顶层已解压技能
+Agent/xAgent/.agents/skills/lifestyle-mental-counseling/

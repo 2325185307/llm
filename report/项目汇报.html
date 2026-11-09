@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>大语言模型课程项目汇报</title>
+<style>
+  :root {
+    --ink: #16242c;
+    --muted: #5f7078;
+    --line: #dbe5e2;
+    --paper: #f6f9f7;
+    --card: #ffffff;
+    --accent: #0c7c72;
+    --accent-dark: #095c55;
+    --accent-soft: #e4f2ef;
+    --amber: #d6a431;
+    --blue: #3b6ea5;
+    --danger: #b33b31;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+    color: var(--ink);
+    background: #e8eceb;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .slide {
+    position: relative;
+    width: 1280px;
+    height: 720px;
+    margin: 0 auto;
+    padding: 56px 72px;
+    background: var(--paper);
+    overflow: hidden;
+    page-break-after: always;
+    break-after: page;
+  }
+  .slide::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 6px;
+    background: linear-gradient(90deg, var(--accent), #31a38c 45%, var(--amber));
+  }
+
+  /* 封面 */
+  .cover { background: radial-gradient(circle at 82% 8%, #d7ebe6 0, transparent 40%), linear-gradient(160deg, #0b3f39 0%, #0c5c54 55%, #0c7c72 100%); color: #fff; }
+  .cover::before { background: linear-gradient(90deg, #31a38c, var(--amber)); }
+  .cover .eyebrow { color: #9fe0d2; }
+  .cover h1 { color: #fff; }
+
+  .eyebrow {
+    margin: 0 0 8px;
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+  }
+  h1 { margin: 0; font-size: 46px; line-height: 1.15; letter-spacing: 0; }
+  h2 { margin: 0; font-size: 30px; line-height: 1.2; }
+  .subtitle { margin: 14px 0 0; font-size: 20px; color: var(--muted); }
+  .cover .subtitle { color: #cfe7e1; }
+
+  .page-num {
+    position: absolute;
+    right: 56px; bottom: 34px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .cover .page-num { color: #bcd9d2; }
+
+  /* 布局 */
+  .cols { display: grid; gap: 20px; }
+  .cols-2 { grid-template-columns: 1fr 1fr; }
+  .cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .cols-4 { grid-template-columns: repeat(4, 1fr); }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 22px 24px;
+    box-shadow: 0 8px 24px rgba(20,60,50,.06);
+  }
+  .card h3 { margin: 0 0 8px; font-size: 19px; }
+  .card .tag {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 20px;
+    background: var(--accent-soft);
+    color: var(--accent-dark);
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 10px;
+  }
+  .card p { margin: 6px 0; font-size: 15px; line-height: 1.6; color: var(--ink); }
+  .card .desc { color: var(--muted); }
+
+  .pill {
+    display: inline-block;
+    padding: 3px 11px;
+    margin: 3px 4px 3px 0;
+    border-radius: 20px;
+    background: var(--accent-soft);
+    color: var(--accent-dark);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .pill.amber { background: #f7ecd3; color: #8a6416; }
+  .pill.blue { background: #e3ecf5; color: var(--blue); }
+
+  .section-head { margin: 0 0 22px; }
+  .section-head .lead { margin: 8px 0 0; color: var(--muted); font-size: 16px; }
+
+  /* 工具网格 */
+  .tool-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; margin-top: 8px; }
+  .tool-grid code {
+    font-family: "Cascadia Code", "Consolas", monospace;
+    font-size: 13px;
+    color: var(--accent-dark);
+  }
+
+  /* 流程 */
+  .flow { display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; }
+  .node {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 18px;
+    text-align: center;
+    font-weight: 700;
+    box-shadow: 0 6px 18px rgba(20,60,50,.05);
+  }
+  .node .sub { display: block; font-weight: 400; color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .node.accent { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .node.accent .sub { color: #d7efe9; }
+  .arrow { font-size: 26px; color: var(--accent); font-weight: 700; }
+
+  .big-number { font-size: 34px; font-weight: 800; color: var(--accent); }
+
+  ul.tight { margin: 6px 0; padding-left: 20px; }
+  ul.tight li { margin: 5px 0; font-size: 15px; line-height: 1.55; }
+  ul.tight li::marker { color: var(--accent); }
+
+  .footnote { margin-top: 18px; font-size: 13px; color: var(--muted); }
+
+  code.inline {
+    font-family: "Cascadia Code", "Consolas", monospace;
+    font-size: 13px;
+    background: var(--accent-soft);
+    color: var(--accent-dark);
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+</style>
+</head>
+<body>
+
+<!-- 1 封面 -->
+<section class="slide cover">
+  <p class="eyebrow">大语言模型课程 · 项目汇报</p>
+  <h1 style="font-size:56px;margin-top:20px;">宠物医院 MCP 生态<br>× 心理咨询 Agent</h1>
+  <p class="subtitle" style="font-size:22px;margin-top:22px;">MCP 服务 · AnythingLLM · 心理咨询 Agent 一体化演示</p>
+  <div style="margin-top:60px;">
+    <span class="pill" style="background:rgba(255,255,255,.16);color:#fff;">🐾 宠物医院 MCP</span>
+    <span class="pill" style="background:rgba(255,255,255,.16);color:#fff;">🔌 AnythingLLM MCP</span>
+    <span class="pill" style="background:rgba(255,255,255,.16);color:#fff;">🌐 AnythingLLM 网页</span>
+    <span class="pill" style="background:rgba(255,255,255,.16);color:#fff;">🤖 心理咨询 Agent xAgent</span>
+  </div>
+  <p class="subtitle" style="margin-top:46px;font-size:15px;">GitHub 托管 · 四组件完整可运行</p>
+  <div class="page-num">1 / 8</div>
+</section>
+
+<!-- 2 项目总览 -->
+<section class="slide">
+  <div class="section-head">
+    <p class="eyebrow">Overview</p>
+    <h2>项目总览 · 四个组件</h2>
+    <p class="lead">围绕「宠物医院」业务场景，构建 MCP 服务 + 知识库 + 智能 Agent 的完整链路。</p>
+  </div>
+  <div class="cols cols-2" style="gap:18px;margin-bottom:22px;">
+    <div class="card">
+      <span class="tag">组件一 · 数据服务</span>
+      <h3>🐾 宠物医院 MCP</h3>
+      <p class="desc">Go 标准库后端（内嵌网页 + 29 个 REST 接口）+ Python MCP 适配，暴露 <b>16 个 MCP 工具</b>。</p>
+    </div>
+    <div class="card">
+      <span class="tag">组件二 · 知识库服务</span>
+      <h3>🔌 AnythingLLM MCP</h3>
+      <p class="desc">基于 MCP SDK 的 AnythingLLM 工作区服务，暴露 <b>4 个 MCP 工具</b>（问答 / 检索）。</p>
+    </div>
+    <div class="card">
+      <span class="tag">组件三 · 前端</span>
+      <h3>🌐 AnythingLLM 网页</h3>
+      <p class="desc">单文件 HTML「文档工作台」，拖拽上传资料到 AnythingLLM 工作区。</p>
+    </div>
+    <div class="card">
+      <span class="tag">组件四 · 智能体</span>
+      <h3>🤖 心理咨询 Agent xAgent</h3>
+      <p class="desc">DeepSeek 驱动的心理咨询 Agent（CBT 取向），内置 6 个咨询技能，通过 MCP 编排调用各服务。</p>
+    </div>
+  </div>
+  <div class="flow">
+    <div class="node">用户<br><span class="sub">终端输入</span></div>
+    <span class="arrow">→</span>
+    <div class="node accent">心理咨询 Agent<br><span class="sub">CBT · DeepSeek · 工具编排</span></div>
+    <span class="arrow">⇄</span>
+    <div class="node">宠物医院 MCP<br><span class="sub">16 工具 · 8000</span></div>
+    <span class="arrow">⇄</span>
+    <div class="node">AnythingLLM MCP<br><span class="sub">4 工具 · 8081</span></div>
+  </div>
+  <div class="page-num">2 / 8</div>
+</section>
+
+<!-- 3 宠物医院 MCP -->
+<section class="slide">
+  <div class="section-head">
+    <p class="eyebrow">Component 01</p>
+    <h2>宠物医院 MCP</h2>
+    <p class="lead">Go 标准库本地服务 + Python MCP 适配层，把宠物医院业务能力开放为 MCP 工具。</p>
+  </div>
+  <div class="cols cols-2" style="gap:20px;">
+    <div class="card">
+      <h3>Go 后端 <code class="inline">:8080</code></h3>
+      <ul class="tight">
+        <li><b>内嵌网页</b>：档案增删改查、搜索筛选、病历与消费明细、经营统计</li>
+        <li><b>29 个 REST 接口</b>：CRUD、全文检索、批量、导出 JSON/CSV、压实</li>
+        <li><b>单文件嵌入式数据库</b>：append-only 日志 + CRC32 校验 + 自动压实 + 崩溃自愈</li>
+        <li><b>零第三方依赖</b>：仅标准库，单文件可迁移</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>MCP 适配 <code class="inline">:8000/mcp</code></h3>
+      <ul class="tight">
+        <li>Python 实现，将 REST 能力映射为 <b>16 个 MCP 工具</b></li>
+        <li>档案 CRUD、病历/收费追加、统计导出、批量删除、数据库压实</li>
+        <li>工具名规范化，参数 Schema 完整，可供任意 MCP 客户端调用</li>
+      </ul>
+    </div>
+  </div>
+  <div class="card" style="margin-top:18px;">
+    <h3 style="font-size:16px;">MCP 工具一览（16 个）</h3>
+    <div class="tool-grid">
+      <span><code>list_pets</code> / <code>get_pet</code></span>
+      <span><code>create_pet</code> / <code>update_pet</code></span>
+      <span><code>patch_pet</code> / <code>delete_pet</code></span>
+      <span><code>search_pets</code> / <code>get_stats</code></span>
+      <span><code>list_pet_records</code> / <code>add_pet_record</code></span>
+      <span><code>list_pet_charges</code> / <code>add_pet_charge</code></span>
+      <span><code>get_pet_summary</code> / <code>export_pets</code></span>
+      <span><code>compact_database</code> / <code>batch_delete_pets</code></span>
+    </div>
+  </div>
+  <div class="page-num">3 / 8</div>
+</section>
+
+<!-- 4 AnythingLLM MCP -->
+<section class="slide">
+  <div class="section-head">
+    <p class="eyebrow">Component 02</p>
+    <h2>AnythingLLM MCP</h2>
+    <p class="lead">基于官方 MCP SDK 2.x，把 AnythingLLM 工作区能力暴露为 MCP 工具。</p>
+  </div>
+  <div class="cols cols-2" style="gap:20px;">
+    <div class="card">
+      <h3>服务实现</h3>
+      <ul class="tight">
+        <li>使用 <code class="inline">mcp.server.MCPServer</code> + Pydantic 输入模型</li>
+        <li><b>Streamable HTTP</b> 协议，无状态模式（stateless）</li>
+        <li>端点 <code class="inline">http://127.0.0.1:8081/mcp</code>，健康检查 <code class="inline">/health</code></li>
+        <li>连接信息通过环境变量注入，不写死密钥</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>四个 MCP 工具</h3>
+      <ul class="tight">
+        <li><code class="inline">ask_workspace</code> — 向工作区提问，返回 AI 回答</li>
+        <li><code class="inline">get_workspace</code> — 工作区配置 / 文档 / 线程摘要</li>
+        <li><code class="inline">list_workspace_chats</code> — 聊天记录（分页 / 排序）</li>
+        <li><code class="inline">vector_search</code> — 文档向量相似度检索</li>
+      </ul>
+    </div>
+  </div>
+  <div class="card" style="margin-top:18px;">
+    <h3 style="font-size:16px;">关键点</h3>
+    <ul class="tight">
+      <li>严格遵循 <b>MCP 协议规范</b>（含 initialize / list_tools / call_tool），可直接被 MCP Inspector 或 SDK 客户端连接</li>
+      <li>端口默认 <code class="inline">8081</code>，避免与宠物医院 Go 后端 <code class="inline">8080</code> 冲突</li>
+    </ul>
+  </div>
+  <div class="page-num">4 / 8</div>
+</section>
+
+<!-- 5 AnythingLLM 网页 -->
+<section class="slide">
+  <div class="section-head">
+    <p class="eyebrow">Component 03</p>
+    <h2>AnythingLLM 网页 · 文档工作台</h2>
+    <p class="lead">单文件 HTML 前端，把本地资料批量上传到 AnythingLLM 工作区。</p>
+  </div>
+  <div class="cols cols-2" style="gap:20px;">
+    <div class="card">
+      <h3>核心功能</h3>
+      <ul class="tight">
+        <li>拖拽 / 选择文件，<b>批量上传</b>，单文件最大 50 MB</li>
+        <li>自动加载并选择 <b>目标工作区</b>（slug）</li>
+        <li>连接状态指示灯 + 工作区数量 / 待传 / 完成统计</li>
+        <li>上传队列（待传 / 上传中 / 成功 / 失败）与移除</li>
+        <li>最近活动记录（localStorage 持久化）</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>技术细节</h3>
+      <ul class="tight">
+        <li>纯原生 HTML/CSS/JS，<b>零框架依赖</b>，打开即用</li>
+        <li>调用 AnythingLLM API：<code class="inline">/v1/workspaces</code>、<code class="inline">/v1/document/upload</code></li>
+        <li>Bearer Token 仅存内存，<b>不写入文件</b></li>
+        <li>响应式布局，移动端可用</li>
+      </ul>
+    </div>
+  </div>
+  <div class="card" style="margin-top:18px;">
+    <h3 style="font-size:16px;">支持的文件格式</h3>
+    <span class="pill">PDF</span><span class="pill">TXT</span><span class="pill">Markdown</span>
+    <span class="pill">Word (.doc/.docx)</span><span class="pill">CSV</span><span class="pill">JSON</span>
+    <span class="pill">HTML</span><span class="pill">Excel (.xlsx/.xls)</span>
+  </div>
+  <div class="page-num">5 / 8</div>
+</section>
+
+<!-- 6 心理咨询 Agent -->
+<section class="slide">
+  <div class="section-head">
+    <p class="eyebrow">Component 04</p>
+    <h2>心理咨询 Agent · xAgent</h2>
+    <p class="lead">「安心」——CBT 取向心理咨询师，全屏 TUI，内置 6 个咨询技能并编排 MCP 工具。</p>
+  </div>
+  <div class="cols cols-2" style="gap:20px;">
+    <div class="card">
+      <h3>咨询能力</h3>
+      <ul class="tight">
+        <li><b>人设</b>：温暖、共情、非评判，协作式引导而非说教</li>
+        <li><b>6 个咨询技能</b>：CBT 治疗师、心理健康、心理健康助手、治疗师筛查、亲密关系治疗、治疗流派</li>
+        <li><b>安全边界</b>：自杀 / 自伤念头立即转介危机干预热线 400-161-9995</li>
+        <li><b>结构化流程</b>：评估 → 探索（认知重构 / 苏格拉底提问）→ 反馈与家庭作业</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>工程机制</h3>
+      <ul class="tight">
+        <li><span class="pill">loadSkill</span> 按需加载技能全文与参考文件</li>
+        <li><span class="pill">recallContext</span> 历史上下文检索</li>
+        <li><span class="pill amber">MCP × 20</span> 动态并入宠物医院 / AnythingLLM 工具</li>
+        <li><b>上下文压缩</b>：70% 阈值触发，原上下文归档 <code class="inline">.agents/context/</code></li>
+        <li><b>会话持久化</b>：JSONL 存 <code class="inline">.agents/sessions/</code>，可 /resume 恢复</li>
+      </ul>
+    </div>
+  </div>
+  <div class="card" style="margin-top:18px;">
+    <h3 style="font-size:16px;">TUI 界面与配置</h3>
+    <p class="desc" style="margin:4px 0;">左侧对话、右侧状态边栏（上下文用量 / MCP 服务器与工具 / 斜杠命令）。斜杠命令：<code class="inline">/new /resume /save /compact /clear /help /skills /mcp /quit</code>；参数全部走 <code class="inline">config.ini</code>，缺失自动生成 mock 模板；MCP 异步加载，先进入界面再动态刷新边栏。</p>
+  </div>
+  <div class="page-num">6 / 8</div>
+</section>
+
+<!-- 7 端到端工作流 -->
+<section class="slide">
+  <div class="section-head">
+    <p class="eyebrow">Workflow</p>
+    <h2>端到端工作流</h2>
+    <p class="lead">一次典型对话如何串起全部组件。</p>
+  </div>
+  <div class="flow" style="margin-top:40px;">
+    <div class="node">来访者<br><span class="sub">“最近总是焦虑失眠”</span></div>
+    <span class="arrow">→</span>
+    <div class="node accent">心理咨询 Agent<br><span class="sub">共情 · 加载 CBT 技能</span></div>
+    <span class="arrow">→</span>
+    <div class="node">评估与重构<br><span class="sub">情绪量表 / 认知重构</span></div>
+    <span class="arrow">→</span>
+    <div class="node">按需 MCP<br><span class="sub">宠物医院 / AnythingLLM</span></div>
+    <span class="arrow">→</span>
+    <div class="node">回应 + 作业<br><span class="sub">结构化反馈与目标</span></div>
+  </div>
+  <div class="cols cols-3" style="gap:18px;margin-top:40px;">
+    <div class="card">
+      <h3 style="font-size:16px;">技能驱动对话</h3>
+      <p class="desc">loadSkill 按需加载 CBT 框架、量表、大师智慧库等参考材料。</p>
+    </div>
+    <div class="card">
+      <h3 style="font-size:16px;">安全边界</h3>
+      <p class="desc">识别自杀 / 自伤信号，立即转介危机干预，来访者安全优先。</p>
+    </div>
+    <div class="card">
+      <h3 style="font-size:16px;">上下文可控</h3>
+      <p class="desc">70% 阈值自动提示压缩，长会话跨轮次记忆不爆窗口。</p>
+    </div>
+  </div>
+  <div class="page-num">7 / 8</div>
+</section>
+
+<!-- 8 总结 -->
+<section class="slide">
+  <div class="section-head">
+    <p class="eyebrow">Summary</p>
+    <h2>总结</h2>
+  </div>
+  <div class="cols cols-4" style="gap:16px;margin-bottom:26px;">
+    <div class="card" style="text-align:center;"><div class="big-number">4</div><p class="desc">组件全部就绪</p></div>
+    <div class="card" style="text-align:center;"><div class="big-number">20</div><p class="desc">MCP 工具接入</p></div>
+    <div class="card" style="text-align:center;"><div class="big-number">9</div><p class="desc">斜杠命令</p></div>
+    <div class="card" style="text-align:center;"><div class="big-number">6</div><p class="desc">心理咨询技能</p></div>
+  </div>
+  <div class="cols cols-2" style="gap:20px;">
+    <div class="card">
+      <h3>技术栈</h3>
+      <span class="pill">Go 标准库</span><span class="pill">Python</span><span class="pill">MCP SDK 2.x</span>
+      <span class="pill">DeepSeek API</span><span class="pill">prompt_toolkit</span><span class="pill">AnythingLLM API</span>
+      <span class="pill">原生 HTML/CSS/JS</span><span class="pill">百度千帆搜索</span>
+    </div>
+    <div class="card">
+      <h3>交付物</h3>
+      <ul class="tight">
+        <li>GitHub 仓库：四组件源码 + README + 根 <code class="inline">.mcp.json</code></li>
+        <li>汇报 Word 材料 + 本幻灯片（PDF）</li>
+      </ul>
+    </div>
+  </div>
+  <p class="subtitle" style="margin-top:40px;text-align:center;">感谢聆听 · 欢迎指正</p>
+  <div class="page-num">8 / 8</div>
+</section>
+
+</body>
+</html>

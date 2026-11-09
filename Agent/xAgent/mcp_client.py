@@ -109,6 +109,37 @@ def _preflight_http(url: str, timeout: float = 5.0) -> str | None:
         return f"无法连接到 {url}（{_describe_exc(exc)}，服务器可能未启动）"
 
 
+def _deref_schema(schema, defs):
+    """内联解析 JSON Schema 的 $ref / $defs，递归展开为 OpenAI 可识别的对象 schema。
+
+    OpenAI / DeepSeek 的 Function Calling 不支持 JSON Schema 的 $ref 与 $defs，
+    而 MCP SDK 生成的 inputSchema 常以 $ref 引用 Pydantic 模型，需要在此展开。
+    """
+    if isinstance(schema, dict):
+        if "$ref" in schema:
+            ref = schema["$ref"]
+            if isinstance(ref, str) and ref.startswith("#/$defs/"):
+                target = defs.get(ref[len("#/$defs/"):])
+                if isinstance(target, dict):
+                    return _deref_schema(target, defs)
+            return {}  # 无法解析的引用，回退为空对象
+        out = {}
+        for key, value in schema.items():
+            if key == "$defs":
+                continue
+            if isinstance(value, dict):
+                out[key] = _deref_schema(value, defs)
+            elif isinstance(value, list):
+                out[key] = [
+                    _deref_schema(item, defs) if isinstance(item, dict) else item
+                    for item in value
+                ]
+            else:
+                out[key] = value
+        return out
+    return schema
+
+
 def _to_openai_parameters(input_schema):
     """把 MCP 工具的 inputSchema 转成 OpenAI Function Calling 的 parameters。"""
     if not isinstance(input_schema, dict) or not input_schema:
@@ -117,11 +148,13 @@ def _to_openai_parameters(input_schema):
         # OpenAI / DeepSeek 要求 parameters.type 必须为 object；
         # 非 object 的 schema 无法表达，回退为空 object schema 以保调用可用。
         return {"type": "object", "properties": {}}
+    defs = input_schema.get("$defs") or {}
+    resolved = _deref_schema(input_schema, defs)
     params = {
         "type": "object",
-        "properties": input_schema.get("properties") or {},
+        "properties": resolved.get("properties") or {},
     }
-    required = input_schema.get("required")
+    required = resolved.get("required")
     if isinstance(required, list):
         params["required"] = required
     return params

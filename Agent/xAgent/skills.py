@@ -1,7 +1,7 @@
 """Agent Skills 动态加载机制。
 
 负责三件事：
-1. 以程序启动时的工作目录为项目根目录，扫描 .agents/skills/ 下的各 Skill 子目录，
+1. 以脚本所在目录为根，扫描 .agents/skills/ 下的各 Skill 子目录，
    解析每个 SKILL.md 的 YAML Frontmatter，初始化阶段只提取 name 与 description；
 2. 生成包含可用技能列表的 System Prompt，让 LLM 知道有哪些技能、如何按需加载；
 3. 提供 loadSkill 工具实现，按需读取 SKILL.md 全文或技能目录内的附加文件，
@@ -11,9 +11,10 @@
 import os
 import re
 
-# 程序启动时的工作目录作为项目根目录（模块 import 时固化，避免后续 chdir 影响）
-PROJECT_ROOT = os.path.abspath(os.getcwd())
-SKILLS_DIR = os.path.join(PROJECT_ROOT, ".agents", "skills")
+# 技能随 xAgent 安装目录（脚本目录）分发，与 config.ini 一致，不随运行时 cwd 变化。
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = BASE_DIR
+SKILLS_DIR = os.path.join(BASE_DIR, ".agents", "skills")
 
 # 已发现的技能列表，每项：{"name", "description", "dir", "skill_md"}
 _skills = []
