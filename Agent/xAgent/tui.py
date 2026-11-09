@@ -5,19 +5,24 @@ MCP 采用异步加载：先进入界面，后台连接完成后动态刷新边�
 """
 
 import asyncio
+import os
 import queue
+import sys
 import threading
 
 from prompt_toolkit import Application
 from prompt_toolkit.application.current import get_app
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.data_structures import Size
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.output.vt100 import Vt100_Output
+from prompt_toolkit.output.win32 import NoConsoleScreenBufferError
 from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import TextArea
 
@@ -394,14 +399,57 @@ def run_tui():
         ]
     )
 
-    app = Application(
-        layout=Layout(root),
-        key_bindings=kb,
-        full_screen=True,
-        style=STYLE,
-        mouse_support=True,
-    )
+    app = _create_application(tui, kb, root)
     app.run(pre_run=tui._on_pre_run)
+
+
+def _create_application(tui, kb, root):
+    """构造 prompt_toolkit Application，无真实 Windows 控制台时退回 VT100 输出。
+
+    在 VSCode「运行」按钮 / ConPTY 伪控制台 / 重定向等场景下没有传统控制台
+    屏幕缓冲区，默认的 Win32Output 会抛 NoConsoleScreenBufferError；此时改用
+    VT100 输出（VSCode 集成终端、Windows Terminal 等支持 ANSI 转义序列）。
+    """
+    try:
+        return Application(
+            layout=Layout(root),
+            key_bindings=kb,
+            full_screen=True,
+            style=STYLE,
+            mouse_support=True,
+        )
+    except NoConsoleScreenBufferError:
+        return Application(
+            layout=Layout(root),
+            key_bindings=kb,
+            full_screen=True,
+            style=STYLE,
+            mouse_support=True,
+            output=_vt100_output(),
+        )
+
+
+def _vt100_output() -> Vt100_Output:
+    """构造 Windows 下可用的 VT100 输出，用 os.get_terminal_size 读取尺寸。
+
+    Vt100_Output.from_pty 依赖 termios（仅 POSIX），Windows 下不可用；这里
+    手写 get_size，读取失败时回退到 80×24，避免因无控制台句柄而崩溃。
+    """
+
+    def get_size():
+        try:
+            cols, rows = os.get_terminal_size()
+        except OSError:
+            cols, rows = 80, 24
+        return Size(rows=rows, columns=cols)
+
+    return Vt100_Output(
+        sys.stdout,
+        get_size,
+        default_color_depth=None,
+        enable_bell=False,
+        enable_cpr=False,
+    )
 
 
 if __name__ == "__main__":

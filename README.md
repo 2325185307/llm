@@ -36,7 +36,7 @@
 ## 组件四：心理咨询 Agent（xAgent）
 
 - 运行：在仓库根目录执行 `python Agent/xAgent/chat.py`（全屏 TUI）
-- 人设：「安心」，CBT（认知行为治疗）取向心理咨询师，含危机干预安全边界
+- 人设：「心安」，CBT（认知行为治疗）取向心理咨询师，含危机干预安全边界
 - 内置 6 个心理咨询技能（CBT 治疗师、心理健康、心理健康助手、治疗师筛查、亲密关系治疗、治疗流派），位于 `Agent/xAgent/.agents/skills/`
 - 通过根目录 `.mcp.json` 自动连接上述 MCP 服务（异步加载，TUI 边栏实时展示服务器与工具）
 - 首次运行自动生成 `Agent/xAgent/config.ini` 模板，填入 DeepSeek / 百度千帆密钥后重启
