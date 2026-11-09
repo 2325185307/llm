@@ -291,8 +291,10 @@ class McpClientManager:
 
     # ── 对外同步接口 ──
 
-    def discover_and_register(self, reserved_names: set[str] | None = None):
-        """读取 .mcp.json，连接所有 Server 并注册工具。
+    def discover_and_register(
+        self, reserved_names: set[str] | None = None, config_file: str | None = None
+    ):
+        """读取 .mcp.json（或指定配置文件），连接所有 Server 并注册工具。
 
         返回 (tool_defs, callables, messages)：
           - tool_defs   OpenAI Function Calling 工具定义列表
@@ -302,7 +304,7 @@ class McpClientManager:
         self._ensure_executor()
 
         reserved = set(reserved_names or ())
-        config_path = os.path.join(os.getcwd(), CONFIG_FILE)
+        config_path = os.path.join(os.getcwd(), config_file or CONFIG_FILE)
         tool_defs: list[dict] = []
         callables: dict[str, object] = {}
         messages: list[str] = []
@@ -389,6 +391,19 @@ class McpClientManager:
             messages.append("已连接 MCP Server，但未发现任何工具")
         return tool_defs, callables, messages
 
+    def summary(self) -> list[dict]:
+        """返回已连接 Server 及其工具名列表，供 TUI 边栏展示。"""
+        servers = []
+        for name, server in sorted(self._servers.items()):
+            servers.append(
+                {
+                    "name": name,
+                    "transport": server.transport,
+                    "tools": [t["name"] for t in server.tools],
+                }
+            )
+        return servers
+
     def _make_callable(self, server_name: str, original: str):
         def call(**arguments):
             return self.call_tool(server_name, original, arguments)
@@ -431,8 +446,10 @@ class McpClientManager:
 _manager = McpClientManager()
 
 
-def discover_and_register(reserved_names: set[str] | None = None):
-    return _manager.discover_and_register(reserved_names)
+def discover_and_register(
+    reserved_names: set[str] | None = None, config_file: str | None = None
+):
+    return _manager.discover_and_register(reserved_names, config_file)
 
 
 def call_tool(server_name: str, original_name: str, arguments: dict | None = None) -> str:
@@ -441,3 +458,56 @@ def call_tool(server_name: str, original_name: str, arguments: dict | None = Non
 
 def shutdown() -> None:
     _manager.shutdown()
+
+
+# ─── 异步发现（不阻塞 TUI 启动）──
+
+_async_state = {
+    "done": False,
+    "defs": [],
+    "fns": {},
+    "messages": [],
+}
+
+
+def start_async_discovery(
+    reserved_names: set[str] | None = None, config_file: str | None = None
+) -> None:
+    """在后台线程执行 MCP 工具发现，立即返回；结果用 get_discovery_result 读取。"""
+    _async_state["done"] = False
+    _async_state["defs"] = []
+    _async_state["fns"] = {}
+    _async_state["messages"] = []
+
+    def _work() -> None:
+        try:
+            defs, fns, msgs = _manager.discover_and_register(reserved_names, config_file)
+            _async_state["defs"] = defs
+            _async_state["fns"] = fns
+            _async_state["messages"] = msgs
+        except Exception as exc:  # 兜底：异常不应拖垮 TUI
+            _async_state["messages"] = [f"MCP 加载失败：{_describe_exc(exc)}"]
+        finally:
+            _async_state["done"] = True
+
+    threading.Thread(target=_work, name="mcp-discovery", daemon=True).start()
+
+
+def get_discovery_result():
+    """返回 (是否完成, 工具定义列表, 工具函数字典, 提示消息列表)。"""
+    return (
+        _async_state["done"],
+        _async_state["defs"],
+        _async_state["fns"],
+        _async_state["messages"],
+    )
+
+
+def discovery_summary() -> dict:
+    """返回 TUI 边栏所需的 MCP 状态：{done, servers, messages}。"""
+    done = _async_state["done"]
+    return {
+        "done": done,
+        "servers": _manager.summary() if done else [],
+        "messages": _async_state["messages"],
+    }

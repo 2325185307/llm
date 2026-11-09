@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "PeiHospitalMCP": {
+      "url": "http://127.0.0.1:8000/mcp"
+    },
+    "AnythingLLM-MCP": {
+      "url": "http://127.0.0.1:8081/mcp"
+    }
+  }
+}

@@ -1,4 +1,3 @@
-import configparser
 import json
 import os
 import subprocess
@@ -9,34 +8,32 @@ import urllib.request
 import trafilatura
 from openai import OpenAI
 
-import skills
-import mcp_client
+import config
 import context
+import mcp_client
+import sessions
+import skills
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-# 读取与脚本同目录下的 config.ini，避免受启动目录影响
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-config = configparser.ConfigParser()
-config.read(os.path.join(BASE_DIR, "config.ini"), encoding="utf-8")
+# 配置：从 config.ini 读取（缺失时自动生成 mock 模板并提示）
+cfg = config.load()
 
-section = config["llm"]
-client = OpenAI(base_url=section["base_url"], api_key=section["api_key"])
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+client = OpenAI(base_url=cfg.llm_base_url, api_key=cfg.llm_api_key)
+
+# 供 ui.py 复用的配置段（兼容旧接口 section["model"]）
+section = {"model": cfg.llm_model}
 
 # 百度千帆智能搜索（原始搜索结果）接口
 SEARCH_API_URL = "https://qianfan.baidubce.com/v2/ai_search/web_search"
 
-# 网页正文返回给 LLM 的长度上限，避免超长页面占用过多上下文
-MAX_MARKDOWN_CHARS = 12000
-
-# RunCli 命令执行的超时（秒）
-CLI_TIMEOUT = 30
-# RunCli 返回给 LLM 的 stdout / stderr 长度上限，避免超长输出占用过多上下文
-MAX_STDOUT_CHARS = 4000
-MAX_STDERR_CHARS = 2000
-
-# /compact 压缩时允许模型输出的最大 token 数（目标摘要约 5000 tokens，留足余量）
-COMPACT_MAX_TOKENS = 8192
+# 以下参数均来自 config.ini（带默认值），避免硬编码
+MAX_MARKDOWN_CHARS = cfg.max_markdown_chars
+CLI_TIMEOUT = cfg.cli_timeout
+MAX_STDOUT_CHARS = cfg.max_stdout_chars
+MAX_STDERR_CHARS = cfg.max_stderr_chars
+COMPACT_MAX_TOKENS = cfg.compact_max_tokens
 
 
 def _decode(data: bytes) -> str:
@@ -57,12 +54,10 @@ def _truncate(text: str, limit: int) -> str:
 
 
 def _get_search_api_key():
-    """从 config.ini 的 [search] 小节读取百度千帆 API Key，不在代码中硬编码。"""
-    if not config.has_section("search"):
-        return None, "config.ini 中缺少 [search] 小节，请添加 baidu_qianfan_api_key 配置"
-    key = config["search"].get("baidu_qianfan_api_key", "").strip()
-    if not key:
-        return None, "config.ini 中 baidu_qianfan_api_key 为空，请先配置 API Key"
+    """从 config.ini 的 [search] 小节读取百度千帆 API Key。"""
+    key = cfg.search_api_key.strip()
+    if not key or "REPLACE-ME" in key:
+        return None, "config.ini 中 baidu_qianfan_api_key 为空或仍是占位符，请配置真实密钥"
     return key, None
 
 
@@ -87,7 +82,6 @@ def _find_item_list(obj):
 
 def _format_search_results(data):
     """把 API 返回整理成：搜索摘要 + 参考来源标题 + URL。"""
-    # 优先处理 API 层面的错误返回
     if isinstance(data, dict):
         if data.get("error_code") or data.get("error_msg"):
             return f"搜索 API 返回错误：{data.get('error_code')} {data.get('error_msg')}".strip()
@@ -171,7 +165,6 @@ def fetch_web(url):
     用 subprocess 以参数列表方式调用本地 curl 获取 HTML（不使用 shell=True），
     再用 trafilatura 提取正文并转为 Markdown，去除导航、广告、页脚等无关内容。
     """
-    # 1. curl 抓取 HTML（参数列表方式）
     cmd = [
         "curl",
         "-L",  # 跟随重定向
@@ -199,7 +192,6 @@ def fetch_web(url):
     if not result.stdout:
         return "错误：网页返回内容为空"
 
-    # 2. trafilatura 提取正文并转换为 Markdown（传原始 bytes，由库自行识别编码）
     try:
         markdown = trafilatura.extract(
             result.stdout,
@@ -320,51 +312,158 @@ tool_functions = {
 }
 
 # --- Agent Skills 动态加载 ---
-# 初始化阶段：仅发现并注册各 Skill 的 name / description，不加载完整正文。
-# Skill 的完整内容只在 LLM 调用 loadSkill 工具时才进入对话上下文。
 skills.discover_skills()
 SYSTEM_MESSAGE = skills.build_system_message()
 
-# 追加 loadSkill / createSkill 工具，与已有 searchWeb / fetchWeb / RunCli 协同工作
+# 追加 loadSkill / createSkill / recallContext 工具
 tools.append(skills.LOAD_SKILL_TOOL)
 tool_functions["loadSkill"] = skills.load_skill
 tools.append(skills.CREATE_SKILL_TOOL)
 tool_functions["createSkill"] = skills.create_skill
-
-# 追加 recallContext 工具：检索 /compact 压缩前保存的原始上下文归档
 tools.append(context.RECALL_CONTEXT_TOOL)
 tool_functions["recallContext"] = context.recall_context
 
-# --- MCP 工具动态注册 ---
-# 读取当前项目目录(cwd)下的 .mcp.json，连接外部 MCP Server，把其工具并入 tools，
-# 使 LLM 能像调用本地 Function Calling 工具一样调用 MCP 工具。
-_mcp_defs, _mcp_fns, _mcp_msgs = mcp_client.discover_and_register(
-    reserved_names={t["function"]["name"] for t in tools}
-)
-for _msg in _mcp_msgs:
-    print(f"[MCP] {_msg}", file=sys.stderr)
-tools.extend(_mcp_defs)
-tool_functions.update(_mcp_fns)
 
-def _do_compact(history):
-    """执行 /compact：先归档原始上下文，再调用 LLM 生成摘要，最后替换上下文。
+# --- MCP 工具异步注册（先进入 TUI，加载完成后动态刷新边栏）---
+_mcp_merged = False
+
+
+def _reserved_names():
+    return {t["function"]["name"] for t in tools}
+
+
+# 后台线程中连接 MCP Server，立即返回；结果通过 sync_mcp_tools 合并
+mcp_client.start_async_discovery(
+    reserved_names=_reserved_names(), config_file=cfg.mcp_config_file
+)
+
+
+def sync_mcp_tools() -> bool:
+    """MCP 发现完成后，把发现的工具合并进 tools / tool_functions。返回是否已合并。"""
+    global _mcp_merged
+    if _mcp_merged:
+        return True
+    done, defs, fns, _msgs = mcp_client.get_discovery_result()
+    if not done:
+        return False
+    tools.extend(defs)
+    tool_functions.update(fns)
+    _mcp_merged = True
+    return True
+
+
+def mcp_discovery_done() -> bool:
+    return mcp_client.get_discovery_result()[0]
+
+
+def mcp_sidebar_text() -> str:
+    """生成 TUI 边栏中 MCP 区域的文本。"""
+    summary = mcp_client.discovery_summary()
+    if not summary["done"]:
+        return "MCP 加载中…"
+    lines = []
+    if summary["servers"]:
+        for sv in summary["servers"]:
+            lines.append(f"● {sv['name']} [{sv['transport']}]（{len(sv['tools'])} 个工具）")
+            for t in sv["tools"]:
+                lines.append(f"    · {t}")
+    else:
+        lines.append("（未连接任何 MCP Server）")
+    for m in summary["messages"]:
+        if m.startswith("已连接 MCP Server"):
+            continue  # 成功信息已在上方服务器列表中展示
+        lines.append(f"⚠ {m}")
+    return "\n".join(lines)
+
+
+# --- 会话核心逻辑 ---
+
+
+def new_history() -> list:
+    """新建会话：System Prompt + 可选注入 AGENTS.md（一次注入，全程复用）。"""
+    return sessions.inject_agents_md([SYSTEM_MESSAGE])
+
+
+def run_turn(history, user_text, progress=None):
+    """执行一轮对话：先做工具调用循环，再给出最终回答。
+
+    原地更新 history，返回 (回复文本, 最近一次 API 报告的输入 token 数)。
+    progress 为可选回调，接收字符串，用于 TUI 实时显示工具调用进度。
+    """
+    history.append({"role": "user", "content": user_text})
+    api_prompt_tokens = None
+
+    while True:
+        response = client.chat.completions.create(
+            model=cfg.llm_model,
+            messages=history,
+            tools=tools,
+            tool_choice="auto",
+        )
+        if getattr(response, "usage", None):
+            api_prompt_tokens = getattr(response.usage, "prompt_tokens", None)
+        message = response.choices[0].message
+
+        if not message.tool_calls:
+            break
+
+        history.append(
+            {
+                "role": "assistant",
+                "content": message.content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in message.tool_calls
+                ],
+            }
+        )
+
+        for tc in message.tool_calls:
+            name = tc.function.name
+            args = json.loads(tc.function.arguments or "{}")
+            if progress:
+                progress(f"🔧 调用工具 {name}，参数：{json.dumps(args, ensure_ascii=False)}")
+            try:
+                result = tool_functions[name](**args)
+            except Exception as exc:
+                result = f"错误：工具 {name} 执行失败：{exc}"
+            history.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+            if progress:
+                progress(f"📋 {name} 返回：{result[:200]}")
+
+    reply = (message.content or "").strip()
+    if not reply:
+        # 兜底：极少数情况下最终消息 content 为空，再请求一次
+        resp2 = client.chat.completions.create(model=cfg.llm_model, messages=history)
+        reply = (resp2.choices[0].message.content or "").strip()
+    history.append({"role": "assistant", "content": reply})
+    return reply, api_prompt_tokens
+
+
+def compact(history, progress=None):
+    """执行 /compact：先归档原始上下文，再调用 LLM 生成摘要并替换上下文。
 
     返回 (新 history, 是否成功, 提示消息)。失败时保持原 history 不变。
-    压缩期间不传 tools，因此模型只能生成摘要，不能调用其它工具。
     """
-    # 1) 必须先成功保存原始上下文，否则不进行后续压缩
     try:
         archive_id, archive_path = context.save_archive(history)
     except OSError as exc:
         return history, False, f"✗ 压缩失败：原始上下文归档保存失败：{exc}"
 
-    print(f"正在压缩上下文（归档编号 {archive_id}，共 {len(history)} 条消息）…")
+    if progress:
+        progress(f"正在压缩上下文（归档编号 {archive_id}，共 {len(history)} 条消息）…")
 
-    # 2) 调用 LLM 生成摘要
     try:
         messages = context.build_compact_messages(history)
         resp = client.chat.completions.create(
-            model=section["model"],
+            model=cfg.llm_model,
             messages=messages,
             max_tokens=COMPACT_MAX_TOKENS,
         )
@@ -375,7 +474,6 @@ def _do_compact(history):
     if not summary:
         return history, False, f"✗ 压缩失败：模型未返回摘要\n原上下文已保留，归档在 {archive_path}"
 
-    # 3) 追加归档说明，并替换上下文（保留 System Prompt）
     summary = summary.rstrip() + "\n\n" + context.make_archive_note(archive_id)
     new_history = [SYSTEM_MESSAGE, {"role": "system", "content": summary}]
     new_tokens = context.count_history_tokens(new_history)
@@ -386,120 +484,48 @@ def _do_compact(history):
     )
 
 
-def _status_line(current_tokens, window, is_default):
-    """构造上下文占用状态行，返回 (状态文本, 占用百分比)。"""
-    pct = current_tokens / window * 100
+# --- 上下文用量与状态 ---
+
+
+def context_window_info():
+    """返回 (上下文窗口 token 数, 是否使用默认值)。"""
+    window, is_default = context.get_context_window(cfg.llm_model)
+    # config.ini 的 context_window 作为显式覆盖
+    if cfg.context_window > 0 and cfg.context_window != window:
+        window = cfg.context_window
+        is_default = False
+    return window, is_default
+
+
+def current_tokens(history, api_prompt_tokens=None, last_reply=""):
+    """估算/统计当前上下文 token 数：优先 API 报告，否则本地估算。"""
+    if api_prompt_tokens is not None:
+        return api_prompt_tokens + context.estimate_tokens(last_reply)
+    return context.count_history_tokens(history)
+
+
+def status_line(tokens):
+    """生成上下文占用状态行，返回 (状态文本, 占用百分比)。"""
+    window, is_default = context_window_info()
+    pct = tokens / window * 100
     win_label = context.format_k(window) + ("（默认）" if is_default else "")
-    line = f"[上下文] {context.format_k(current_tokens)} / {win_label}  ({pct:.1f}%)"
-    if pct >= context.COMPACT_THRESHOLD * 100:
-        line += f"  ⚠️ 已达 {int(context.COMPACT_THRESHOLD * 100)}% 阈值，请执行 /compact"
+    line = f"[上下文] {context.format_k(tokens)} / {win_label}  ({pct:.1f}%)"
+    if pct >= cfg.compact_threshold * 100:
+        line += f"  ⚠️ 已达 {int(cfg.compact_threshold * 100)}% 阈值，请执行 /compact"
     return line, pct
 
 
+def at_threshold(tokens):
+    """上下文占用是否达到压缩阈值。"""
+    window, _ = context_window_info()
+    return tokens / window >= cfg.compact_threshold
+
+
 def main():
-    """命令行交互入口：终端里的多轮对话 REPL。"""
-    window, is_default = context.get_context_window(section["model"])
-    history = [SYSTEM_MESSAGE]
-    current_tokens = context.count_history_tokens(history)
-    api_prompt_tokens = None  # 最近一次 API 报告的输入 token 数（优先使用）
+    """命令行入口：启动全屏 TUI。"""
+    from tui import run_tui
 
-    print("输入 /compact 可手动压缩上下文。")
-    while True:
-        # 显示上下文占用；达到 70% 时暂停接收普通提示词
-        status, pct = _status_line(current_tokens, window, is_default)
-        blocked = pct >= context.COMPACT_THRESHOLD * 100
-
-        if blocked:
-            prompt = input(f"{status}\n[已暂停] 仅接受 /compact 命令，请输入：")
-        else:
-            prompt = input(f"{status}\nplease input your prompt：")
-        print("---")
-
-        prompt = prompt.strip()
-
-        if prompt == "/compact":
-            history, ok, msg = _do_compact(history)
-            print(msg)
-            if ok:
-                current_tokens = context.count_history_tokens(history)
-                api_prompt_tokens = None
-            continue
-
-        if blocked:
-            print("上下文已达 70% 阈值，已暂停接收新提示词，请先执行 /compact。")
-            continue
-
-        if not prompt:
-            continue
-
-        history.append({"role": "user", "content": prompt})
-
-        # 第一轮：非流式调用，处理模型可能发起的工具调用，直到模型给出最终回答
-        while True:
-            response = client.chat.completions.create(
-                model=section["model"],
-                messages=history,
-                tools=tools,
-                tool_choice="auto",
-            )
-            if getattr(response, "usage", None):
-                api_prompt_tokens = getattr(response.usage, "prompt_tokens", None)
-            message = response.choices[0].message
-
-            if not message.tool_calls:
-                break
-
-            history.append(
-                {
-                    "role": "assistant",
-                    "content": message.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in message.tool_calls
-                    ],
-                }
-            )
-
-            for tool_call in message.tool_calls:
-                name = tool_call.function.name
-                args = json.loads(tool_call.function.arguments or "{}")
-                result = tool_functions[name](**args)
-                history.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": result,
-                    }
-                )
-
-        # 第二轮：流式输出最终答案
-        stream = client.chat.completions.create(
-            model=section["model"],
-            messages=history,
-            stream=True,
-        )
-
-        reply = ""
-        for chunk in stream:
-            delta = chunk.choices[0].delta.content
-            if delta:
-                reply += delta
-                print(delta, end="", flush=True)
-        print()
-        history.append({"role": "assistant", "content": reply})
-
-        # 每轮结束后更新上下文用量：优先 API 的 prompt_tokens，否则估算
-        if api_prompt_tokens is not None:
-            current_tokens = api_prompt_tokens + context.estimate_tokens(reply)
-        else:
-            current_tokens = context.count_history_tokens(history)
+    run_tui()
 
 
 if __name__ == "__main__":
